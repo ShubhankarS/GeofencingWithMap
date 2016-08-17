@@ -12,11 +12,14 @@ import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.app.FragmentActivity;
+import android.support.v4.content.ContextCompat;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.Button;
 import android.widget.EditText;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -31,6 +34,8 @@ import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
+import com.google.android.gms.maps.model.Circle;
+import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.Marker;
@@ -58,14 +63,20 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     private PendingIntent mGeofencePendingIntent;
     LatLngBounds.Builder boundsBuilder;
     MarkerOptions fenceMarkerOptions;
+    CircleOptions fenceCircleOptions;
     Marker newFenceMarker;
+    Circle newFenceRange;
     HashSet fenceNames;
     List<GeoFence> storedFences;
     Set<String> fenceNameList = new HashSet<>();
+    List<Marker> markersOnMap = new ArrayList<>();
+    List<Circle> circlesOnMap = new ArrayList<>();
+
     Boolean clientConnected = false;
     SharedPreferences mSharedPref;
     Boolean firstTime = true;
     Location myLocation;
+    Button clear;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,6 +87,13 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
 
+        clear = (Button) findViewById(R.id.clear_fences);
+        clear.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                removeAllFences();
+            }
+        });
         //build client
         buildGoogleApiClient();
 
@@ -95,6 +113,16 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             storedFences = new Gson().fromJson(fences, listType);
         } else {
             storedFences = new ArrayList<>();
+        }
+
+        //format fence circle
+        if (fenceCircleOptions == null) {
+            fenceCircleOptions = new CircleOptions()
+                    .radius(Constants.GEOFENCE_RADIUS_IN_METERS)
+                    .visible(true)
+                    .fillColor(ContextCompat.getColor(getApplicationContext(), R.color.fenceCircle))
+                    .strokeColor(ContextCompat.getColor(getApplicationContext(), R.color.fenceCircleStroke))
+                    .strokeWidth(1f);
         }
     }
 
@@ -140,7 +168,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                     fenceNameList.add(item.getName());
                 }
             }
-            setupMapMarkers(storedFences, true);
+            setupMapMarkers(storedFences, true, true);
         } else {
             Log.d(TAG, "No stored fences found");
         }
@@ -158,13 +186,26 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                     fenceMarkerOptions.position(latLng);
                 }
 
+                //initialize its range
+                if (fenceCircleOptions != null) {
+                    fenceCircleOptions.center(latLng);
+                    fenceCircleOptions.radius(Constants.GEOFENCE_RADIUS_IN_METERS);
+
+                }
+
                 //remove all other fence markers
                 if (newFenceMarker != null) {
                     newFenceMarker.remove();
                 }
 
+                //remove circle indicating range
+                if (newFenceRange != null) {
+                    newFenceRange.remove();
+                }
+
                 // drop a marker here
                 newFenceMarker = mMap.addMarker(fenceMarkerOptions);
+                newFenceRange = mMap.addCircle(fenceCircleOptions);
 
                 //animate UI to adjust to new marker
                 mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16f), new GoogleMap.CancelableCallback() {
@@ -182,7 +223,30 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                         final EditText placeName = (EditText) custom.findViewById(R.id.fence_name);
                         TextView cancel = (TextView) custom.findViewById(R.id.cancel_fence_name);
                         TextView confirm = (TextView) custom.findViewById(R.id.confirm_fence_name);
+                        final SeekBar fenceRadius = (SeekBar) custom.findViewById(R.id.fence_radius);
+                        final TextView displayRadius = (TextView) custom.findViewById(R.id.fence_radius_value);
+                        final float[] values = {150, 250, 500, 750, 1000};
                         final AlertDialog alertDialog = alertDialogBuilder.create();
+
+                        fenceRadius.setProgress(0);
+                        fenceRadius.setMax(values.length - 1);
+                        fenceRadius.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                            @Override
+                            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                                Log.d("Seekbar value", "" + progress);
+                                displayRadius.setText(Math.round(values[progress]) + " mtrs");
+                            }
+
+                            @Override
+                            public void onStartTrackingTouch(SeekBar seekBar) {
+
+                            }
+
+                            @Override
+                            public void onStopTrackingTouch(SeekBar seekBar) {
+
+                            }
+                        });
 
                         //set actions on the dialog
                         cancel.setOnClickListener(new View.OnClickListener() {
@@ -190,6 +254,8 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                             public void onClick(View v) {
                                 if (newFenceMarker != null)
                                     newFenceMarker.remove();
+                                if (newFenceRange != null)
+                                    newFenceRange.remove();
                                 alertDialog.cancel();
                             }
                         });
@@ -201,10 +267,13 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                                 if (!TextUtils.isEmpty(fenceName)) {
                                     if (!fenceNameList.contains(fenceName)) {
                                         fence.setName(fenceName);
-                                        addMarker(fence);
-                                        if (newFenceMarker != null) {
+                                        fence.setRadius(values[fenceRadius.getProgress()]);
+                                        addMarker(fence, true);
+                                        if (newFenceMarker != null)
                                             newFenceMarker.remove();
-                                        }
+
+                                        if (newFenceRange != null)
+                                            newFenceRange.remove();
                                         setupGeoFence(fence);
                                         alertDialog.cancel();
                                     } else {
@@ -228,25 +297,90 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     }
 
     //method to set up mapMarkers
-    public void setupMapMarkers(List<GeoFence> fences, boolean addSelf) {
+    public void setupMapMarkers(List<GeoFence> fences, boolean addSelf, boolean showCircle) {
         boundsBuilder = new LatLngBounds.Builder();
         if (addSelf && myLocation != null) {
             boundsBuilder.include(new LatLng(myLocation.getLatitude(), myLocation.getLongitude()));
         }
         for (GeoFence geofence : fences) {
             boundsBuilder.include(geofence.getLatLng());
-            mMap.addMarker(new MarkerOptions().position(geofence.getLatLng()).title(geofence.getName()));
+            markersOnMap.add(mMap.addMarker(new MarkerOptions().position(geofence.getLatLng()).title(geofence.getName())));
+            if (showCircle && geofence.getRadius() != null && geofence.getRadius() > 0) {
+                fenceCircleOptions.radius(geofence.getRadius());
+                fenceCircleOptions.center(geofence.getLatLng());
+                circlesOnMap.add(mMap.addCircle(fenceCircleOptions));
+            }
         }
         mMap.stopAnimation();
         mMap.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 150));
     }
 
     //add marker to location
-    public void addMarker(GeoFence fence) {
+    public void addMarker(GeoFence fence, boolean showCircle) {
         if (boundsBuilder != null) {
             boundsBuilder.include(fence.getLatLng());
-            mMap.addMarker(new MarkerOptions().position(fence.getLatLng()).title(fence.getName()));
+            markersOnMap.add(mMap.addMarker(new MarkerOptions().position(fence.getLatLng()).title(fence.getName())));
+            if (showCircle && fence.getRadius() != null && fence.getRadius() > 0) {
+                fenceCircleOptions.center(fence.getLatLng());
+                fenceCircleOptions.radius(fence.getRadius());
+                circlesOnMap.add(mMap.addCircle(fenceCircleOptions));
+            }
             mMap.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 150));
+        }
+    }
+
+    //method to remove all fences
+    private void removeAllFences() {
+        if (storedFences == null || storedFences.isEmpty()) {
+            Toast.makeText(getApplicationContext(), "No fences to remove!", Toast.LENGTH_LONG).show();
+        } else {
+            if (!mGoogleApiClient.isConnected()) {
+                Toast.makeText(this, getString(R.string.not_connected), Toast.LENGTH_SHORT).show();
+                return;
+            }
+            unregisterFences(new ArrayList<>(fenceNameList));
+            if (!markersOnMap.isEmpty()) {
+                for (Marker marker : markersOnMap) {
+                    marker.remove();
+                }
+                markersOnMap.clear();
+            }
+
+            if (!circlesOnMap.isEmpty()) {
+                for (Circle circle : circlesOnMap) {
+                    circle.remove();
+                }
+                circlesOnMap.clear();
+            }
+        }
+    }
+
+    public void unregisterFences(final List<String> fencesToRemove) {
+        if (!mGoogleApiClient.isConnected()) {
+            Toast.makeText(this, getString(R.string.not_connected), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            // Remove geofences.
+            LocationServices.GeofencingApi.removeGeofences(
+                    mGoogleApiClient,
+                    fencesToRemove
+            ).setResultCallback(new ResultCallback<Status>() {
+                @Override
+                public void onResult(@NonNull Status status) {
+                    if (status.isSuccess()) {
+                        mSharedPref.edit().remove(Constants.FENCE_KEY).apply();
+                        Toast.makeText(getApplicationContext(), "GeoFences Removed", Toast.LENGTH_SHORT).show();
+                    } else {
+                        String errorMessage = GeofenceErrorMessages.getErrorString(getApplicationContext(),
+                                status.getStatusCode());
+                        Log.e(TAG, errorMessage);
+                        Toast.makeText(getApplicationContext(), errorMessage, Toast.LENGTH_SHORT).show();
+                    }
+                }
+            });
+        } catch (SecurityException securityException) {
+            Log.d(TAG, "FINE_LOCATION_PERMISSION NEEDED!");
         }
     }
 

@@ -24,10 +24,29 @@ public class GeoFence {
     @SerializedName("expiresAt")
     Long expiresAt;
 
+    @Expose
+    @SerializedName("radius")
+    Float radius;
+
     public GeoFence(String name, double lat, double lon) {
         this.name = name;
         this.lat = lat;
         this.lon = lon;
+    }
+
+    public GeoFence(String name, double lat, double lon, float radius) {
+        this.name = name;
+        this.lat = lat;
+        this.lon = lon;
+        this.radius = radius;
+    }
+
+    public Float getRadius() {
+        return radius;
+    }
+
+    public void setRadius(Float radius) {
+        this.radius = radius;
     }
 
     public String getName() {
