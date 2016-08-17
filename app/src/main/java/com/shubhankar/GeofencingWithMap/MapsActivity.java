@@ -101,7 +101,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     @Override
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
-        mMap.setPadding(30, 30, 30, 30);
+//        mMap.setPadding(50, 50, 5, 30);
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             mMap.setMyLocationEnabled(true);
             mMap.setOnMyLocationChangeListener(new GoogleMap.OnMyLocationChangeListener() {
@@ -110,7 +110,8 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                     myLocation = location;
                     if (firstTime) {
 //                        Log.d(TAG, "New Location:" + location);
-                        mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(location.getLatitude(), location.getLongitude()), 15f));
+                        if (storedFences == null || storedFences.isEmpty())
+                            mMap.animateCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(location.getLatitude(), location.getLongitude()), 15f));
                         firstTime = false;
                     }
                 }
@@ -131,7 +132,13 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         if (storedFences != null && storedFences.size() > 0) {
             for (GeoFence item : storedFences) {
                 Log.d(TAG, "Got stored fence :" + item.getName());
-                fenceNameList.add(item.getName());
+                if (item.getExpiresAt() != null && System.currentTimeMillis() > item.expiresAt) {
+                    //if fence has expired, remove it from local storage
+                    storedFences.remove(item);
+                    mSharedPref.edit().putString(Constants.FENCE_KEY, new Gson().toJson(storedFences)).apply();
+                } else {
+                    fenceNameList.add(item.getName());
+                }
             }
             setupMapMarkers(storedFences, true);
         } else {
@@ -230,7 +237,8 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             boundsBuilder.include(geofence.getLatLng());
             mMap.addMarker(new MarkerOptions().position(geofence.getLatLng()).title(geofence.getName()));
         }
-        mMap.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 20));
+        mMap.stopAnimation();
+        mMap.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 150));
     }
 
     //add marker to location
@@ -238,7 +246,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         if (boundsBuilder != null) {
             boundsBuilder.include(fence.getLatLng());
             mMap.addMarker(new MarkerOptions().position(fence.getLatLng()).title(fence.getName()));
-            mMap.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 20));
+            mMap.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 150));
         }
     }
 
